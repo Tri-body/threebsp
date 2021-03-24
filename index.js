@@ -47,31 +47,47 @@ module.exports = function(THREE) {
     if(geometry && geometry.attributes) {
       // TODO 暂时就不对geometry.attributes中的position、 normal和uv进行非空验证了，日后有时间在说吧，正常创建的BufferGeometry这些值通常都是有的
       var attributes = geometry.attributes, normal = attributes.normal, position = attributes.position, uv = attributes.uv;
-      var pointsArr = [], normalsArr = [], uvsArr = [], 
-        // 点的数量
-        pointsLength = attributes.position.array.length/attributes.position.itemSize;
-      // 从geometry的attributes读取点、法向量、uv数据
-      for(var i = 0, len = pointsLength; i < len;i++) {
-        // 通常一个点和一个法向量的数据量（itemSize）是3，一个uv的数据量（itemSize）是2
-        var startIndex = 3*i
-        pointsArr.push(new THREE.Vector3(position.array[startIndex], position.array[startIndex + 1], position.array[startIndex + 2]));
-        normalsArr.push(new THREE.Vector3(normal.array[startIndex], normal.array[startIndex + 1], normal.array[startIndex + 2]));
-        uvsArr.push(new THREE.Vector2(uv.array[2*i], uv.array[2*i + 1]));
-      }
-
-      // 根据index获取面的顶点、法向量、uv信息
-      var index = geometry.index.array;
-      for(var i = 0, len = index.length; i < len;) {
-        var polygon = new ThreeBSP.Polygon();
-        // 将所有面都按照三角面进行处理，即三个顶点组成一个面
-        for(var j = 0; j < 3; j++) {
-          var pointIndex = index[i], point = pointsArr[pointIndex];
-          var vertex = new ThreeBSP.Vertex(point.x, point.y, point.z, normalsArr[pointIndex], uvsArr[pointIndex]);
-          vertex.applyMatrix4(this.matrix);
-          polygon.vertices.push(vertex);
-          i++;
+      // 点的数量
+      var pointsLength = attributes.position.array.length/attributes.position.itemSize;
+      
+      // 如果索引三角形index不为空，则根据index获取面的顶点、法向量、uv信息
+      if(geometry.index) {
+        var pointsArr = [], normalsArr = [], uvsArr = [];
+        // 从geometry的attributes读取点、法向量、uv数据
+        for(var i = 0, len = pointsLength; i < len;i++) {
+          // 通常一个点和一个法向量的数据量（itemSize）是3，一个uv的数据量（itemSize）是2
+          var startIndex = 3*i
+          pointsArr.push(new THREE.Vector3(position.array[startIndex], position.array[startIndex + 1], position.array[startIndex + 2]));
+          normalsArr.push(new THREE.Vector3(normal.array[startIndex], normal.array[startIndex + 1], normal.array[startIndex + 2]));
+          uvsArr.push(new THREE.Vector2(uv.array[2*i], uv.array[2*i + 1]));
         }
-        polygons.push(polygon.calculateProperties());
+        var index = geometry.index.array;
+        for(var i = 0, len = index.length; i < len;) {
+          var polygon = new ThreeBSP.Polygon();
+          // 将所有面都按照三角面进行处理，即三个顶点组成一个面
+          for(var j = 0; j < 3; j++) {
+            var pointIndex = index[i], point = pointsArr[pointIndex];
+            var vertex = new ThreeBSP.Vertex(point.x, point.y, point.z, normalsArr[pointIndex], uvsArr[pointIndex]);
+            vertex.applyMatrix4(this.matrix);
+            polygon.vertices.push(vertex);
+            i++;
+          }
+          polygons.push(polygon.calculateProperties());
+        }
+      } else {
+        // 如果索引三角形index为空，则假定每三个相邻位置（即相邻的三个点）表示一个三角形
+        for(var i = 0, len = pointsLength; i < len;) {
+          var polygon = new ThreeBSP.Polygon();
+          // 将所有面都按照三角面进行处理，即三个顶点组成一个面
+          for(var j = 0; j < 3; j++) {
+            var startIndex = 3*i
+            var vertex = new ThreeBSP.Vertex(position.array[startIndex], position.array[startIndex + 1], position.array[startIndex + 2], new THREE.Vector3(normal.array[startIndex], normal.array[startIndex + 1], normal.array[startIndex + 2]), new THREE.Vector2(uv.array[2*i], uv.array[2*i + 1]));
+            vertex.applyMatrix4(this.matrix);
+            polygon.vertices.push(vertex);
+            i++;
+          }
+          polygons.push(polygon.calculateProperties());
+        }
       }
     } else {
       console.error("初始化ThreeBSP时为获取到几何数据信息，请检查初始化参数");
