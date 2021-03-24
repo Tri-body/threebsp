@@ -92,24 +92,38 @@ module.exports = function(THREE) {
 
   ThreeBSP.prototype.toGeometry = function() {
     var geometry = new THREE.BufferGeometry(), matrix = new THREE.Matrix4().getInverse(this.matrix);
-    var position = [], normal = [], uv = [];
+    // verticesArr用于记录点（去重），index依次记录面中各个点对应的索引
+    var position = [], normal = [], uv = [], verticesArr = [], index = [];
     this.tree.allPolygons().forEach(polygon => {
       polygon.vertices.forEach(item => {
-        var vertice = item.clone().applyMatrix4(matrix);
-        position.push(vertice.x);
-        position.push(vertice.y);
-        position.push(vertice.z);
-        normal.push(vertice.normal.x);
-        normal.push(vertice.normal.y);
-        normal.push(vertice.normal.z);
-        uv.push(vertice.uv.x);
-        uv.push(vertice.uv.y);
+        var vertice = item.clone().applyMatrix4(matrix), verticeIndex = null;
+        for(var i =0, len = verticesArr.length; i < len; i++) {
+          if(vertice.equals(verticesArr[i])) {
+            verticeIndex = i;
+            break;
+          }
+        }
+        // verticeIndex为空，表示数组中未记录当前点，进行点数据处理
+        if(verticeIndex == null) {
+          verticeIndex = verticesArr.length;
+          verticesArr.push(vertice);
+          position.push(vertice.x);
+          position.push(vertice.y);
+          position.push(vertice.z);
+          normal.push(vertice.normal.x);
+          normal.push(vertice.normal.y);
+          normal.push(vertice.normal.z);
+          uv.push(vertice.uv.x);
+          uv.push(vertice.uv.y);
+        }
+        // 存储点的索引
+        index.push(verticeIndex);
       })
     })
-    // TODO 后续可以优化，去除重复点，用geometry的index存储组成面的点的索引
-    geometry.attributes.position = new THREE.BufferAttribute(Float32Array.from(position), 3, false);
-    geometry.attributes.normal = new THREE.BufferAttribute(Float32Array.from(normal), 3, false);
-    geometry.attributes.uv = new THREE.BufferAttribute(Float32Array.from(uv), 2, false);
+    geometry.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(position), 3, false));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(Float32Array.from(normal), 3, false));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(Float32Array.from(uv), 2, false));
+    geometry.index = new THREE.Uint16BufferAttribute(new Uint16Array(index), 1, false);
     return geometry;
   };
 
@@ -190,6 +204,32 @@ module.exports = function(THREE) {
     Vertex.prototype.interpolate = function() {
       var args = 1 <= arguments.length ? __slice.call(arguments, 0) : [], cloneVertex = this.clone();
       return cloneVertex.lerp.apply(cloneVertex, args);
+    };
+
+    /**
+     * 判断两个点是否相同
+     * @returns 
+     */
+    Vertex.prototype.equals = function(vertex) {
+      if(vertex) {
+        if(this.x === vertex.x && this.y === vertex.y && this.z === vertex.z) {
+          var checkUv = function(uv1, uv2) {
+            if(uv1 && uv2 && uv1.x === uv2.x && uv1.y === uv2.y) {
+              return true;
+            } else if(!uv1 && !uv2) {
+              return true;
+            }
+            return false;
+          }
+          if(this.normal && vertex.normal && this.normal.x === vertex.normal.x && this.normal.y === vertex.normal.y && this.normal.z === vertex.normal.z) {
+            return checkUv(this.uv, vertex.uv);
+          }
+          if(!this.normal && !vertex.normal) {
+            return checkUv(this.uv, vertex.uv);
+          }
+        }
+      }
+      return false;
     };
 
     return Vertex;
