@@ -1,33 +1,37 @@
 module.exports = function(THREE) {
-  var BACK, COPLANAR, EPSILON, FRONT, SPANNING, returning,
-    __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; },
-    __slice = [].slice,
+
+  // ε,表示最大的偏差量，如果偏差小于此值，则忽略偏差
+  const EPSILON = 1e-5;
+
+  // 共面
+  const COPLANAR = 0;
+
+  // 在前方
+  const FRONT = 1;
+
+  // 在后方
+  const BACK = 2;
+
+  // 存在交集
+  const SPANNING = 3;
+
+  var  __slice = [].slice,
     __hasProp = {}.hasOwnProperty,
-    __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
-
-  EPSILON = 1e-5;
-
-  COPLANAR = 0;
-
-  FRONT = 1;
-
-  BACK = 2;
-
-  SPANNING = 3;
-
-  returning = function(value, fn) {
-    fn();
-    return value;
-  };
+    __extends = function(child, parent) { 
+      for (var key in parent) { 
+        if (__hasProp.call(parent, key)) child[key] = parent[key]; 
+      }
+      function ctor() {
+        this.constructor = child;
+      }
+      ctor.prototype = parent.prototype;
+      child.prototype = new ctor();
+      child.__super__ = parent.prototype;
+      return child; 
+    };
 
   function ThreeBSP(treeIsh, matrix) {
     this.matrix = matrix;
-    this.intersect = __bind(this.intersect, this);
-    this.union = __bind(this.union, this);
-    this.subtract = __bind(this.subtract, this);
-    this.toGeometry = __bind(this.toGeometry, this);
-    this.toMesh = __bind(this.toMesh, this);
-    this.toTree = __bind(this.toTree, this);
     if (this.matrix == null) {
       this.matrix = new THREE.Matrix4();
     }
@@ -35,129 +39,111 @@ module.exports = function(THREE) {
   }
 
   ThreeBSP.prototype.toTree = function(treeIsh) {
-    var face, geometry, i, polygons, _fn, _i, _len, _ref,
-      _this = this;
     if (treeIsh instanceof ThreeBSP.Node) {
       return treeIsh;
     }
-    polygons = [];
-    geometry = treeIsh instanceof THREE.Geometry ? treeIsh : treeIsh instanceof THREE.Mesh ? (treeIsh.updateMatrix(), this.matrix = treeIsh.matrix.clone(), treeIsh.geometry) : void 0;
-    _ref = geometry.faces;
-    _fn = function(face, i) {
-      var faceVertexUvs, idx, polygon, vIndex, vName, vertex, _j, _len1, _ref1, _ref2;
-      faceVertexUvs = (_ref1 = geometry.faceVertexUvs) != null ? _ref1[0][i] : void 0;
-      if (faceVertexUvs == null) {
-        faceVertexUvs = [new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2()];
+    // 看Three.js 0.126源码，各类Geometry基本都是继承或由BufferGeometry实现，基本上THREE.Geometry就废弃了，所以需要将获取点、法向量、uv信息要从以前的THREE.Geometry的faces中获取改为从THREE.BufferGeometry的attributes中获取
+    var polygons = [], geometry = (treeIsh === THREE.BufferGeometry || (treeIsh.type || "").endsWith("Geometry")) ? treeIsh : treeIsh.constructor === THREE.Mesh ? (treeIsh.updateMatrix(), this.matrix = treeIsh.matrix.clone(), treeIsh.geometry) : void 0;
+    if(geometry && geometry.attributes) {
+      // TODO 暂时就不对geometry.attributes中的position、 normal和uv进行非空验证了，日后有时间在说吧，正常创建的BufferGeometry这些值通常都是有的
+      var attributes = geometry.attributes, normal = attributes.normal, position = attributes.position, uv = attributes.uv;
+      var pointsArr = [], normalsArr = [], uvsArr = [], 
+        // 点的数量
+        pointsLength = attributes.position.array.length/attributes.position.itemSize;
+      // 从geometry的attributes读取点、法向量、uv数据
+      for(var i = 0, len = pointsLength; i < len;i++) {
+        // 通常一个点和一个法向量的数据量（itemSize）是3，一个uv的数据量（itemSize）是2
+        var startIndex = 3*i
+        pointsArr.push(new THREE.Vector3(position.array[startIndex], position.array[startIndex + 1], position.array[startIndex + 2]));
+        normalsArr.push(new THREE.Vector3(normal.array[startIndex], normal.array[startIndex + 1], normal.array[startIndex + 2]));
+        uvsArr.push(new THREE.Vector2(uv.array[2*i], uv.array[2*i + 1]));
       }
-      polygon = new ThreeBSP.Polygon();
-      _ref2 = ['a', 'b', 'c', 'd'];
-      for (vIndex = _j = 0, _len1 = _ref2.length; _j < _len1; vIndex = ++_j) {
-        vName = _ref2[vIndex];
-        if ((idx = face[vName]) != null) {
-          vertex = geometry.vertices[idx];
-          vertex = new ThreeBSP.Vertex(vertex.x, vertex.y, vertex.z, face.vertexNormals[0], new THREE.Vector2(faceVertexUvs[vIndex].x, faceVertexUvs[vIndex].y));
-          vertex.applyMatrix4(_this.matrix);
+
+      // 根据index获取面的顶点、法向量、uv信息
+      var index = geometry.index.array;
+      for(var i = 0, len = index.length; i < len;) {
+        var polygon = new ThreeBSP.Polygon();
+        // 将所有面都按照三角面进行处理，即三个顶点组成一个面
+        for(var j = 0; j < 3; j++) {
+          var pointIndex = index[i], point = pointsArr[pointIndex];
+          var vertex = new ThreeBSP.Vertex(point.x, point.y, point.z, normalsArr[pointIndex], uvsArr[pointIndex]);
+          vertex.applyMatrix4(this.matrix);
           polygon.vertices.push(vertex);
+          i++;
         }
+        polygons.push(polygon.calculateProperties());
       }
-      return polygons.push(polygon.calculateProperties());
-    };
-    for (i = _i = 0, _len = _ref.length; _i < _len; i = ++_i) {
-      face = _ref[i];
-      _fn(face, i);
+    } else {
+      console.error("初始化ThreeBSP时为获取到几何数据信息，请检查初始化参数");
     }
     return new ThreeBSP.Node(polygons);
   };
 
   ThreeBSP.prototype.toMesh = function(material) {
-    var geometry, mesh,
-      _this = this;
+    var geometry = this.toGeometry();
     if (material == null) {
       material = new THREE.MeshNormalMaterial();
     }
-    geometry = this.toGeometry();
-    return returning((mesh = new THREE.Mesh(geometry, material)), function() {
-      mesh.position.getPositionFromMatrix(_this.matrix);
-      return mesh.rotation.setFromRotationMatrix(_this.matrix);
-    });
+    var mesh = new THREE.Mesh(geometry, material);
+    mesh.position.getPositionFromMatrix(this.matrix);
+    mesh.rotation.setFromRotationMatrix(this.matrix);
+    return mesh;
   };
 
   ThreeBSP.prototype.toGeometry = function() {
-    var geometry, matrix,
-      _this = this;
-    matrix = new THREE.Matrix4().getInverse(this.matrix);
-    return returning((geometry = new THREE.Geometry()), function() {
-      var face, idx, polyVerts, polygon, v, vertUvs, verts, _i, _len, _ref, _results;
-      _ref = _this.tree.allPolygons();
-      _results = [];
-      for (_i = 0, _len = _ref.length; _i < _len; _i++) {
-        polygon = _ref[_i];
-        polyVerts = (function() {
-          var _j, _len1, _ref1, _results1;
-          _ref1 = polygon.vertices;
-          _results1 = [];
-          for (_j = 0, _len1 = _ref1.length; _j < _len1; _j++) {
-            v = _ref1[_j];
-            _results1.push(v.clone().applyMatrix4(matrix));
-          }
-          return _results1;
-        })();
-        _results.push((function() {
-          var _j, _ref1, _results1;
-          _results1 = [];
-          for (idx = _j = 2, _ref1 = polyVerts.length; 2 <= _ref1 ? _j < _ref1 : _j > _ref1; idx = 2 <= _ref1 ? ++_j : --_j) {
-            verts = [polyVerts[0], polyVerts[idx - 1], polyVerts[idx]];
-            vertUvs = (function() {
-              var _k, _len1, _ref2, _ref3, _results2;
-              _results2 = [];
-              for (_k = 0, _len1 = verts.length; _k < _len1; _k++) {
-                v = verts[_k];
-                _results2.push(new THREE.Vector2((_ref2 = v.uv) != null ? _ref2.x : void 0, (_ref3 = v.uv) != null ? _ref3.y : void 0));
-              }
-              return _results2;
-            })();
-            face = (function(func, args, ctor) {
-              ctor.prototype = func.prototype;
-              var child = new ctor, result = func.apply(child, args);
-              return Object(result) === result ? result : child;
-            })(THREE.Face3, __slice.call((function() {
-              var _k, _len1, _results2;
-              _results2 = [];
-              for (_k = 0, _len1 = verts.length; _k < _len1; _k++) {
-                v = verts[_k];
-                _results2.push(geometry.vertices.push(v) - 1);
-              }
-              return _results2;
-            })()).concat([polygon.normal.clone()]), function(){});
-            geometry.faces.push(face);
-            _results1.push(geometry.faceVertexUvs[0].push(vertUvs));
-          }
-          return _results1;
-        })());
-      }
-      return _results;
-    });
+    var geometry = new THREE.BufferGeometry(), matrix = new THREE.Matrix4().getInverse(this.matrix);
+    var position = [], normal = [], uv = [];
+    this.tree.allPolygons().forEach(polygon => {
+      polygon.vertices.forEach(item => {
+        var vertice = item.clone().applyMatrix4(matrix);
+        position.push(vertice.x);
+        position.push(vertice.y);
+        position.push(vertice.z);
+        normal.push(vertice.normal.x);
+        normal.push(vertice.normal.y);
+        normal.push(vertice.normal.z);
+        uv.push(vertice.uv.x);
+        uv.push(vertice.uv.y);
+      })
+    })
+    // TODO 后续可以优化，去除重复点，用geometry的index存储组成面的点的索引
+    geometry.attributes.position = new THREE.BufferAttribute(Float32Array.from(position), 3, false);
+    geometry.attributes.normal = new THREE.BufferAttribute(Float32Array.from(normal), 3, false);
+    geometry.attributes.uv = new THREE.BufferAttribute(Float32Array.from(uv), 2, false);
+    return geometry;
   };
 
+  /**
+   * 差集
+   * @param {*} other 
+   * @returns 
+   */
   ThreeBSP.prototype.subtract = function(other) {
-    var them, us, _ref;
-    _ref = [this.tree.clone(), other.tree.clone()], us = _ref[0], them = _ref[1];
+    var us = this.tree.clone(), them = other.tree.clone();
     us.invert().clipTo(them);
     them.clipTo(us).invert().clipTo(us).invert();
     return new ThreeBSP(us.build(them.allPolygons()).invert(), this.matrix);
   };
 
+  /**
+   * 并集
+   * @param {*} other 
+   * @returns 
+   */
   ThreeBSP.prototype.union = function(other) {
-    var them, us, _ref;
-    _ref = [this.tree.clone(), other.tree.clone()], us = _ref[0], them = _ref[1];
+    var us = this.tree.clone(), them = other.tree.clone();
     us.clipTo(them);
     them.clipTo(us).invert().clipTo(us).invert();
     return new ThreeBSP(us.build(them.allPolygons()), this.matrix);
   };
 
+  /**
+   * 交集
+   * @param {*} other 
+   * @returns 
+   */
   ThreeBSP.prototype.intersect = function(other) {
-    var them, us, _ref;
-    _ref = [this.tree.clone(), other.tree.clone()], us = _ref[0], them = _ref[1];
+    var us = this.tree.clone(), them = other.tree.clone();
     them.clipTo(us.invert()).invert().clipTo(us.clipTo(them));
     return new ThreeBSP(us.build(them.allPolygons()).invert(), this.matrix);
   };
@@ -165,115 +151,132 @@ module.exports = function(THREE) {
   ThreeBSP.Vertex = (function(_super) {
     __extends(Vertex, _super);
     function Vertex(x, y, z, normal, uv) {
+      this.x = x;
+      this.y = y;
+      this.z = z;
       this.normal = normal != null ? normal : new THREE.Vector3();
       this.uv = uv != null ? uv : new THREE.Vector2();
-      this.interpolate = __bind(this.interpolate, this);
-      this.lerp = __bind(this.lerp, this);
-      Vertex.__super__.constructor.call(this, x, y, z);
+      // 此方法调用父级THREE.Vector3构造函数会报错TypeError: Class constructor Vector3 cannot be invoked without 'new'，因此弃用此方式，改为显示初始化x,y,z
+      // Vertex.__super__.constructor.call(this, x, y, z);
     }
 
+    /**
+     * 克隆点
+     * @returns 
+     */
     Vertex.prototype.clone = function() {
       return new ThreeBSP.Vertex(this.x, this.y, this.z, this.normal.clone(), this.uv.clone());
     };
 
+    /**
+     * 插点函数
+     * @param {*} v 
+     * @param {*} alpha 
+     * @returns 
+     */
     Vertex.prototype.lerp = function(v, alpha) {
-      var _this = this;
-      return returning(Vertex.__super__.lerp.apply(this, arguments), function() {
-        _this.uv.add(v.uv.clone().sub(_this.uv).multiplyScalar(alpha));
-        return _this.normal.lerp(v, alpha);
-      });
+      // 对uv进行插值
+      this.uv.add(v.uv.clone().sub(this.uv).multiplyScalar(alpha));
+      // 对法向量进行插值
+      this.normal.lerp(v, alpha);
+      // 调用THREE.Vector3的lerp方法对点进行插值
+      return Vertex.__super__.lerp.apply(this, arguments);
     };
 
+    /**
+     * 在两个点之间插入新的点
+     * @returns 
+     */
     Vertex.prototype.interpolate = function() {
-      var args, _ref;
-      args = 1 <= arguments.length ? __slice.call(arguments, 0) : [];
-      return (_ref = this.clone()).lerp.apply(_ref, args);
+      var args = 1 <= arguments.length ? __slice.call(arguments, 0) : [], cloneVertex = this.clone();
+      return cloneVertex.lerp.apply(cloneVertex, args);
     };
 
     return Vertex;
 
   })(THREE.Vector3);
 
+  /**
+   * 多边形（或者成为网格），目前默认只有三角形
+   */
   ThreeBSP.Polygon = (function() {
     function Polygon(vertices, normal, w) {
       this.vertices = vertices != null ? vertices : [];
+      // 网格面的法向量
       this.normal = normal;
       this.w = w;
-      this.subdivide = __bind(this.subdivide, this);
-      this.tessellate = __bind(this.tessellate, this);
-      this.classifySide = __bind(this.classifySide, this);
-      this.classifyVertex = __bind(this.classifyVertex, this);
-      this.invert = __bind(this.invert, this);
-      this.clone = __bind(this.clone, this);
-      this.calculateProperties = __bind(this.calculateProperties, this);
       if (this.vertices.length) {
         this.calculateProperties();
       }
     }
 
+    /**
+     * 计算面的一些属性
+     * @returns 
+     */
     Polygon.prototype.calculateProperties = function() {
-      var _this = this;
-      return returning(this, function() {
-        var a, b, c, _ref;
-        _ref = _this.vertices, a = _ref[0], b = _ref[1], c = _ref[2];
-        _this.normal = b.clone().sub(a).cross(c.clone().sub(a)).normalize();
-        return _this.w = _this.normal.clone().dot(a);
-      });
+      var a = this.vertices[0], b = this.vertices[1], c = this.vertices[2];
+      // 计算面的法向量
+      this.normal = b.clone().sub(a).cross(c.clone().sub(a)).normalize();
+      this.w = this.normal.clone().dot(a);
+      return this;
     };
 
+    /**
+     * 克隆网格面
+     * @returns 
+     */
     Polygon.prototype.clone = function() {
-      var v;
-      return new ThreeBSP.Polygon((function() {
-        var _i, _len, _ref, _results;
-        _ref = this.vertices;
-        _results = [];
-        for (_i = 0, _len = _ref.length; _i < _len; _i++) {
-          v = _ref[_i];
-          _results.push(v.clone());
-        }
-        return _results;
-      }).call(this), this.normal.clone(), this.w);
+      return new ThreeBSP.Polygon(this.vertices.map(v => v.clone()), this.normal.clone(), this.w);
     };
 
+    /**
+     * 对网格面进行翻转倒置
+     * @returns 
+     */
     Polygon.prototype.invert = function() {
-      var _this = this;
-      return returning(this, function() {
-        _this.normal.multiplyScalar(-1);
-        _this.w *= -1;
-        return _this.vertices.reverse();
-      });
+      this.normal.multiplyScalar(-1);
+      this.w *= -1;
+      this.vertices.reverse();
+      return this;
     };
 
+    /**
+     * 判断点与当前网格面的关系
+     * @param {*} vertex 
+     * @returns 
+     */
     Polygon.prototype.classifyVertex = function(vertex) {
-      var side;
-      side = this.normal.dot(vertex) - this.w;
+      var side = this.normal.dot(vertex) - this.w;
       switch (false) {
         case !(side < -EPSILON):
           return BACK;
         case !(side > EPSILON):
           return FRONT;
         default:
+          // 共面
           return COPLANAR;
       }
     };
 
+    /**
+     * 判断指定网格面polygon与当前网格面的关系（FRONT：在当前面的前方， BACK：在当前面的后方， COPLANAR：与当前面共面， SPANNING：两个面交叉）
+     * @param {*} polygon 
+     * @returns 
+     */
     Polygon.prototype.classifySide = function(polygon) {
-      var back, front, tally, v, _i, _len, _ref, _ref1,
-        _this = this;
-      _ref = [0, 0], front = _ref[0], back = _ref[1];
-      tally = function(v) {
-        switch (_this.classifyVertex(v)) {
+      var back = 0, front = 0;
+      polygon.vertices.forEach(vertice => {
+        switch (this.classifyVertex(vertice)) {
           case FRONT:
-            return front += 1;
+            front += 1;
+            break;
           case BACK:
-            return back += 1;
+            back += 1;
+            break;
         }
-      };
-      _ref1 = polygon.vertices;
-      for (_i = 0, _len = _ref1.length; _i < _len; _i++) {
-        v = _ref1[_i];
-        tally(v);
-      }
+      })
+
       if (front > 0 && back === 0) {
         return FRONT;
       }
@@ -281,64 +284,80 @@ module.exports = function(THREE) {
         return BACK;
       }
       if ((front === back && back === 0)) {
+        // 共面
         return COPLANAR;
       }
       return SPANNING;
     };
 
+    /**
+     * 对两个网格面进行嵌合
+     * @param {*} poly 
+     * @returns 
+     */
     Polygon.prototype.tessellate = function(poly) {
-      var b, count, f, i, j, polys, t, ti, tj, v, vi, vj, _i, _len, _ref, _ref1, _ref2,
-        _this = this;
-      _ref = {
-        f: [],
-        b: [],
-        count: poly.vertices.length
-      }, f = _ref.f, b = _ref.b, count = _ref.count;
+      // 如果两个面是平行的或者时共面，则直接返回无需处理
       if (this.classifySide(poly) !== SPANNING) {
         return [poly];
       }
-      _ref1 = poly.vertices;
-      for (i = _i = 0, _len = _ref1.length; _i < _len; i = ++_i) {
-        vi = _ref1[i];
+      // 如果两个面是相交面，则进行插值处理
+      var frontVertices = [], backVertices = [], count = poly.vertices.length, t, ti, tj, v, vi, vj;
+      for (var i = 0, _len = poly.vertices.length; i < _len; i++) {
+        vi = poly.vertices[i];
         vj = poly.vertices[(j = (i + 1) % count)];
-        _ref2 = (function() {
-          var _j, _len1, _ref2, _results;
-          _ref2 = [vi, vj];
-          _results = [];
-          for (_j = 0, _len1 = _ref2.length; _j < _len1; _j++) {
-            v = _ref2[_j];
-            _results.push(this.classifyVertex(v));
-          }
-          return _results;
-        }).call(this), ti = _ref2[0], tj = _ref2[1];
+        ti = this.classifyVertex(vi),
+        tj = this.classifyVertex(vj);
         if (ti !== BACK) {
-          f.push(vi);
+          frontVertices.push(vi);
         }
         if (ti !== FRONT) {
-          b.push(vi);
+          backVertices.push(vi);
         }
         if ((ti | tj) === SPANNING) {
           t = (this.w - this.normal.dot(vi)) / this.normal.dot(vj.clone().sub(vi));
           v = vi.interpolate(vj, t);
-          f.push(v);
-          b.push(v);
+          frontVertices.push(v);
+          backVertices.push(v);
         }
       }
-      return returning((polys = []), function() {
-        if (f.length >= 3) {
-          polys.push(new ThreeBSP.Polygon(f));
+      var polys = [], frontLength = frontVertices.length, backLength = backVertices.length;
+      if (frontLength >= 3) {
+        polys.push(new ThreeBSP.Polygon(frontVertices.slice(0, 3)));
+        // 将多边形切割成多个三角面
+        if (frontLength > 3) {
+          var newVertices;
+          for(var start = 2; start < frontLength; start++) {
+            newVertices = [frontVertices[start], frontVertices[(start + 1)%frontLength], frontVertices[(start + 2)%frontLength]]
+            polys.push(new ThreeBSP.Polygon(newVertices));
+          }
         }
-        if (b.length >= 3) {
-          return polys.push(new ThreeBSP.Polygon(b));
+      }
+      if (backLength >= 3) {
+        polys.push(new ThreeBSP.Polygon(backVertices.slice(0, 3)));
+        // 将多边形切割成多个三角面
+        if (backLength > 3) {
+          var newVertices;
+          for(var start = 2; start < backLength - 1; start++) {
+            newVertices = [backVertices[start], backVertices[(start + 1)%backLength], backVertices[(start + 2)%backLength]]
+            polys.push(new ThreeBSP.Polygon(newVertices));
+          }
         }
-      });
+      }
+      return polys;
     };
 
+    /**
+     * 将指定面的点对于当前面的关系进行细分
+     * @param {*} polygon 
+     * @param {*} coplanar_front 
+     * @param {*} coplanar_back 
+     * @param {*} front 
+     * @param {*} back 
+     * @returns 
+     */
     Polygon.prototype.subdivide = function(polygon, coplanar_front, coplanar_back, front, back) {
-      var poly, side, _i, _len, _ref, _results;
-      _ref = this.tessellate(polygon);
-      _results = [];
-      for (_i = 0, _len = _ref.length; _i < _len; _i++) {
+      var poly, side, _ref = this.tessellate(polygon), _results = [];
+      for (var _i = 0, _len = _ref.length; _i < _len; _i++) {
         poly = _ref[_i];
         side = this.classifySide(poly);
         switch (side) {
@@ -363,82 +382,69 @@ module.exports = function(THREE) {
     };
 
     return Polygon;
-
   })();
 
   ThreeBSP.Node = (function() {
-    Node.prototype.clone = function() {
-      var node,
-        _this = this;
-      return returning((node = new ThreeBSP.Node()), function() {
-        var p, _ref, _ref1, _ref2;
-        node.divider = (_ref = _this.divider) != null ? _ref.clone() : void 0;
-        node.polygons = (function() {
-          var _i, _len, _ref1, _results;
-          _ref1 = this.polygons;
-          _results = [];
-          for (_i = 0, _len = _ref1.length; _i < _len; _i++) {
-            p = _ref1[_i];
-            _results.push(p.clone());
-          }
-          return _results;
-        }).call(_this);
-        node.front = (_ref1 = _this.front) != null ? _ref1.clone() : void 0;
-        return node.back = (_ref2 = _this.back) != null ? _ref2.clone() : void 0;
-      });
-    };
 
     function Node(polygons) {
-      this.clipTo = __bind(this.clipTo, this);
-      this.clipPolygons = __bind(this.clipPolygons, this);
-      this.invert = __bind(this.invert, this);
-      this.allPolygons = __bind(this.allPolygons, this);
-      this.isConvex = __bind(this.isConvex, this);
-      this.build = __bind(this.build, this);
-      this.clone = __bind(this.clone, this);
       this.polygons = [];
-      if ((polygons != null) && polygons.length) {
+      if (polygons != null && polygons.length) {
         this.build(polygons);
       }
     }
-
-    Node.prototype.build = function(polygons) {
-      var _this = this;
-      return returning(this, function() {
-        var poly, polys, side, sides, _i, _len, _results;
-        sides = {
-          front: [],
-          back: []
-        };
-        if (_this.divider == null) {
-          _this.divider = polygons[0].clone();
-        }
-        for (_i = 0, _len = polygons.length; _i < _len; _i++) {
-          poly = polygons[_i];
-          _this.divider.subdivide(poly, _this.polygons, _this.polygons, sides.front, sides.back);
-        }
-        _results = [];
-        for (side in sides) {
-          if (!__hasProp.call(sides, side)) continue;
-          polys = sides[side];
-          if (polys.length) {
-            if (_this[side] == null) {
-              _this[side] = new ThreeBSP.Node();
-            }
-            _results.push(_this[side].build(polys));
-          } else {
-            _results.push(void 0);
-          }
-        }
-        return _results;
-      });
+    
+    /**
+     * 
+     * @returns 克隆Node
+     */
+    Node.prototype.clone = function() {
+      var node = new ThreeBSP.Node();
+      node.divider = this.divider != null ? this.divider.clone() : void 0;
+      node.polygons = this.polygons.map(item => item.clone());
+      node.front = this.front != null ? this.front.clone() : void 0;
+      node.back = this.back != null ? this.back.clone() : void 0;
+      return node;
     };
 
+    /**
+     * 根据面构建Node
+     * @param {*} polygons 
+     * @returns 
+     */
+    Node.prototype.build = function(polygons) {
+      var polys, sides = {
+        front: [],
+        back: []
+      };
+      if (this.divider == null) {
+        this.divider = polygons[0].clone();
+      }
+      for (var _i = 0, _len = polygons.length; _i < _len; _i++) {
+        this.divider.subdivide(polygons[_i], this.polygons, this.polygons, sides.front, sides.back);
+      }
+      for (var side in sides) {
+        if (!__hasProp.call(sides, side)) continue;
+        polys = sides[side];
+        if (polys.length) {
+          if (this[side] == null) {
+            this[side] = new ThreeBSP.Node();
+          }
+          this[side].build(polys)
+        }
+      }
+      return this;
+    };
+
+    /**
+     * 判断是否是凸面的
+     * @param {*} polys 
+     * @returns 
+     */
     Node.prototype.isConvex = function(polys) {
-      var inner, outer, _i, _j, _len, _len1;
-      for (_i = 0, _len = polys.length; _i < _len; _i++) {
+      var inner, outer;
+      for (var _i = 0, _len = polys.length; _i < _len; _i++) {
         inner = polys[_i];
-        for (_j = 0, _len1 = polys.length; _j < _len1; _j++) {
+        for (var _j = 0, _len1 = polys.length; _j < _len1; _j++) {
           outer = polys[_j];
           if (inner !== outer && outer.classifySide(inner) !== BACK) {
             return false;
@@ -448,42 +454,45 @@ module.exports = function(THREE) {
       return true;
     };
 
+    /**
+     * 获取Node的所有网格面
+     * @returns 
+     */
     Node.prototype.allPolygons = function() {
-      var _ref, _ref1;
-      return this.polygons.slice().concat(((_ref1 = this.front) != null ? _ref1.allPolygons() : void 0) || []).concat(((_ref = this.back) != null ? _ref.allPolygons() : void 0) || []);
+      return this.polygons.slice().concat(this.front != null ? this.front.allPolygons() : []).concat(this.back != null ? this.back.allPolygons() : []);
     };
 
+    /**
+     * 将Node进行倒置反转
+     * @returns 
+     */
     Node.prototype.invert = function() {
-      var _this = this;
-      return returning(this, function() {
-        var flipper, poly, _i, _j, _len, _len1, _ref, _ref1, _ref2;
-        _ref = _this.polygons;
-        for (_i = 0, _len = _ref.length; _i < _len; _i++) {
-          poly = _ref[_i];
-          poly.invert();
+      // 反转网格
+      this.polygons.forEach(item => item.invert());
+
+      [this.divider, this.front, this.back].forEach(item => {
+        if (item != null) {
+          item.invert();
         }
-        _ref1 = [_this.divider, _this.front, _this.back];
-        for (_j = 0, _len1 = _ref1.length; _j < _len1; _j++) {
-          flipper = _ref1[_j];
-          if (flipper != null) {
-            flipper.invert();
-          }
-        }
-        return _ref2 = [_this.back, _this.front], _this.front = _ref2[0], _this.back = _ref2[1], _ref2;
       });
+
+      var _ref2 = [this.back, this.front];
+      this.front = _ref2[0];
+      this.back = _ref2[1]
+      return this;
     };
 
+    /**
+     * 剪裁多边形
+     * @param {*} polygons 
+     * @returns 
+     */
     Node.prototype.clipPolygons = function(polygons) {
-      var back, front, poly, _i, _len;
+      var back = [], front = [];
       if (!this.divider) {
         return polygons.slice();
       }
-      front = [];
-      back = [];
-      for (_i = 0, _len = polygons.length; _i < _len; _i++) {
-        poly = polygons[_i];
-        this.divider.subdivide(poly, front, back, front, back);
-      }
+      polygons.forEach(poly => this.divider.subdivide(poly, front, back, front, back))
       if (this.front) {
         front = this.front.clipPolygons(front);
       }
@@ -493,20 +502,24 @@ module.exports = function(THREE) {
       return front.concat(this.back ? back : []);
     };
 
+    /**
+     * 用指定node对当前node进行剪裁
+     * @param {*} node 
+     * @returns 
+     */
     Node.prototype.clipTo = function(node) {
-      var _this = this;
-      return returning(this, function() {
-        var _ref, _ref1;
-        _this.polygons = node.clipPolygons(_this.polygons);
-        if ((_ref = _this.front) != null) {
-          _ref.clipTo(node);
-        }
-        return (_ref1 = _this.back) != null ? _ref1.clipTo(node) : void 0;
-      });
+      this.polygons = node.clipPolygons(this.polygons);
+      if (this.front != null) {
+        this.front.clipTo(node);
+      }
+      if (this.back != null) {
+        this.back.clipTo(node);
+      }
+
+      return this;
     };
 
     return Node;
-
   })();
 
   return ThreeBSP;
