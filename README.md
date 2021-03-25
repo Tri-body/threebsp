@@ -6,6 +6,12 @@
 
 ### Vue 中的用法（react 暂时不做示例）
 
+安装 Threebsp 包(因为发布到 npm 时包名不能和之前相同，所以发布时改了下名字，叫 jthreebsp)
+
+```sh
+npm install jthreebsp
+```
+
 必须在前面先引入 THREE 包
 
 ```sh
