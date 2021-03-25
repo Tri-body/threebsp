@@ -95,8 +95,15 @@ module.exports = function(THREE) {
     return new ThreeBSP.Node(polygons);
   };
 
-  ThreeBSP.prototype.toMesh = function(material) {
-    var geometry = this.toGeometry();
+  /**
+   * 转换成mesh
+   * @param {*} material 材质
+   * @param {Boolean} groupByCoplanar 是否根据共面进行分组
+   * @param {Boolean} uniqueMaterial 每个分组使用唯一的材质（此处将材质索引和组索引设置为一样的）
+   * @returns 
+   */
+  ThreeBSP.prototype.toMesh = function(material, groupByCoplanar, uniqueMaterial) {
+    var geometry = this.toGeometry(groupByCoplanar, uniqueMaterial);
     if (material == null) {
       material = new THREE.MeshNormalMaterial();
     }
@@ -106,11 +113,17 @@ module.exports = function(THREE) {
     return mesh;
   };
 
-  ThreeBSP.prototype.toGeometry = function() {
+  /**
+   * 转换成图形
+   * @param {Boolean} groupByCoplanar 是否根据共面进行分组
+   * @param {Boolean} uniqueMaterial 每个分组使用唯一的材质（此处将材质索引和组索引设置为一样的）
+   * @returns 
+   */
+  ThreeBSP.prototype.toGeometry = function(groupByCoplanar, uniqueMaterial) {
     var geometry = new THREE.BufferGeometry(), matrix = new THREE.Matrix4().getInverse(this.matrix);
     // verticesArr用于记录点（去重），index依次记录面中各个点对应的索引
     var position = [], normal = [], uv = [], verticesArr = [], index = [];
-    this.tree.allPolygons().forEach(polygon => {
+    var resolvePolygon = (polygon) => {
       polygon.vertices.forEach(item => {
         var vertice = item.clone().applyMatrix4(matrix), verticeIndex = null;
         for(var i =0, len = verticesArr.length; i < len; i++) {
@@ -135,7 +148,44 @@ module.exports = function(THREE) {
         // 存储点的索引
         index.push(verticeIndex);
       })
-    })
+    };
+    if(groupByCoplanar) {
+      // 将共面的面分到相同的组中
+      var polygonGroups = [], groups = [];
+      this.tree.allPolygons().forEach(polygon => {
+        // 归入分组标志
+        var flag = false;
+        for(var i = 0, len = polygonGroups.length; i < len; i++) {
+          if(COPLANAR === polygon.classifySide(polygonGroups[i][0])) {
+            polygonGroups[i].push(polygon);
+            flag = true;
+            break;
+          }
+        }
+        if(!flag) {
+          // 为归入到已有分组中，建立新的分组
+          polygonGroups.push([polygon]);
+        }
+      });
+      // 按照共面组进行数据的处理
+      var start = 0;
+      for(var i = 0, len = polygonGroups.length; i < len; i++) {
+        var polygonGroup = polygonGroups[i], count = polygonGroup.length * 3, groupItem = {
+          start: start,
+          count: count
+        };
+        if(uniqueMaterial) {
+          groupItem.materialIndex = i;
+        }
+        polygonGroup.forEach(resolvePolygon);
+        groups.push(groupItem);
+        start = start + count;
+      }
+      geometry.groups = groups;
+    } else {
+      this.tree.allPolygons().forEach(resolvePolygon);
+    }
+    
     geometry.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(position), 3, false));
     geometry.setAttribute('normal', new THREE.BufferAttribute(Float32Array.from(normal), 3, false));
     geometry.setAttribute('uv', new THREE.BufferAttribute(Float32Array.from(uv), 2, false));
