@@ -108,7 +108,7 @@ module.exports = function(THREE) {
       material = new THREE.MeshNormalMaterial();
     }
     var mesh = new THREE.Mesh(geometry, material);
-    mesh.position.getPositionFromMatrix(this.matrix);
+    mesh.position.setFromMatrixPosition(this.matrix);
     mesh.rotation.setFromRotationMatrix(this.matrix);
     return mesh;
   };
@@ -120,7 +120,7 @@ module.exports = function(THREE) {
    * @returns 
    */
   ThreeBSP.prototype.toGeometry = function(groupByCoplanar, uniqueMaterial) {
-    var geometry = new THREE.BufferGeometry(), matrix = new THREE.Matrix4().getInverse(this.matrix);
+    var geometry = new THREE.BufferGeometry(), matrix = this.matrix.clone().invert();
     // verticesArr用于记录点（去重），index依次记录面中各个点对应的索引
     var position = [], normal = [], uv = [], verticesArr = [], index = [];
     var resolvePolygon = (polygon) => {
